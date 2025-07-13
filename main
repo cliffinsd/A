@@ -1,0 +1,225 @@
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, CallbackQueryHandler
+import json
+import os
+import time
+
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class RentalManager:
+    def __init__(self):
+        self.commissions = {'accessory': 0.08, 'guard': 0.12}
+        self.data_file = 'rental_data.json'
+        self.data = self._load_data()
+    
+    def _load_data(self):
+        if os.path.exists(self.data_file):
+            with open(self.data_file, 'r') as f:
+                return json.load(f)
+        return {'users': {}}
+    
+    def _save_data(self):
+        with open(self.data_file, 'w') as f:
+            json.dump(self.data, f, indent=2)
+    
+    def add_item(self, user_id, name, item_type):
+        user_id = str(user_id)
+        if user_id not in self.data['users']:
+            self.data['users'][user_id] = {'accessories': [], 'guards': []}
+        item_list = 'guards' if item_type == 'guard' else 'accessories'
+        if name not in self.data['users'][user_id][item_list]:
+            self.data['users'][user_id][item_list].append(name)
+            self._save_data()
+            return True
+        return False
+    
+    def remove_item(self, user_id, name, item_type):
+        user_id = str(user_id)
+        item_list = 'guards' if item_type == 'guard' else 'accessories'
+        if user_id in self.data['users'] and name in self.data['users'][user_id][item_list]:
+            self.data['users'][user_id][item_list].remove(name)
+            self.data['transactions'] = [t for t in self.data.get('transactions', []) 
+                                      if not (t['user_id'] == user_id and t['item'] == name and t['type'] == item_type)]
+            self._save_data()
+            return True
+        return False
+    
+    def add_transaction(self, user_id, item, amount, hours, item_type):
+        commission = self.commissions[item_type]
+        total = amount * hours
+        fee = total * commission
+        earnings = total - fee
+        transaction = {
+            'user_id': str(user_id),
+            'item': item,
+            'amount': amount,
+            'hours': hours,
+            'total': total,
+            'fee': fee,
+            'earnings': earnings,
+            'type': item_type,
+            'timestamp': time.time()
+        }
+        if 'transactions' not in self.data:
+            self.data['transactions'] = []
+        self.data['transactions'].append(transaction)
+        self._save_data()
+        return total, fee, earnings
+    
+    def get_stats(self, user_id, item_type=None, period=None):
+        user_id = str(user_id)
+        transactions = [t for t in self.data.get('transactions', []) 
+                       if t['user_id'] == user_id and (item_type is None or t['type'] == item_type)]
+        if period:
+            cutoff = time.time() - {'24h': 86400, 'week': 604800, 'month': 2592000}[period]
+            transactions = [t for t in transactions if t['timestamp'] >= cutoff]
+        total = sum(t['total'] for t in transactions)
+        fee = sum(t['fee'] for t in transactions)
+        earnings = sum(t['earnings'] for t in transactions)
+        return total, fee, earnings
+    
+    def get_item_stats(self, user_id, item_name, item_type, period=None):
+        user_id = str(user_id)
+        transactions = [t for t in self.data.get('transactions', []) 
+                       if t['user_id'] == user_id and t['item'] == item_name and t['type'] == item_type]
+        if period:
+            cutoff = time.time() - {'24h': 86400, 'week': 604800, 'month': 2592000}[period]
+            transactions = [t for t in transactions if t['timestamp'] >= cutoff]
+        total = sum(t['total'] for t in transactions)
+        fee = sum(t['fee'] for t in transactions)
+        earnings = sum(t['earnings'] for t in transactions)
+        return total, fee, earnings
+
+class RentalBot:
+    def __init__(self, token, whitelist):
+        self.manager = RentalManager()
+        self.whitelist = whitelist
+        self.updater = Updater(token)
+        self.dispatcher = self.updater.dispatcher
+        self._register_handlers()
+    
+    def _register_handlers(self):
+        self.dispatcher.add_handler(CommandHandler('start', self.start))
+        self.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_message))
+        self.dispatcher.add_handler(CallbackQueryHandler(self.button_handler, pattern='^(remove|stats)_'))
+    
+    def start(self, update: Update, context: CallbackContext):
+        if update.effective_user.id not in self.whitelist:
+            update.message.reply_text("🚫 Доступ запрещен")
+            return
+        buttons = [
+            [KeyboardButton("Добавить аксессуар"), KeyboardButton("Добавить охранника")],
+            [KeyboardButton("Мои аксессуары"), KeyboardButton("Мои охранники")],
+            [KeyboardButton("Удалить аксессуар"), KeyboardButton("Удалить охранника")],
+            [KeyboardButton("Статистика")]
+        ]
+        update.message.reply_text("👋 Выберите действие:", reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True))
+    
+    def handle_message(self, update: Update, context: CallbackContext):
+        text = update.message.text
+        user_id = update.effective_user.id
+        if text == "Добавить аксессуар":
+            context.user_data['action'] = {'type': 'add', 'item_type': 'accessory'}
+            update.message.reply_text("Введите название аксессуара:")
+        elif text == "Добавить охранника":
+            context.user_data['action'] = {'type': 'add', 'item_type': 'guard'}
+            update.message.reply_text("Введите имя охранника:")
+        elif text == "Мои аксессуары":
+            self.show_items(update, user_id, 'accessory')
+        elif text == "Мои охранники":
+            self.show_items(update, user_id, 'guard')
+        elif text == "Удалить аксессуар":
+            self.show_items_to_remove(update, user_id, 'accessory')
+        elif text == "Удалить охранника":
+            self.show_items_to_remove(update, user_id, 'guard')
+        elif text == "Статистика":
+            self.show_stats_menu(update)
+        elif 'action' in context.user_data:
+            self.handle_action(update, context, user_id)
+    
+    def handle_action(self, update: Update, context: CallbackContext, user_id: int):
+        action = context.user_data['action']
+        text = update.message.text
+        if action['type'] == 'add':
+            if self.manager.add_item(user_id, text, action['item_type']):
+                update.message.reply_text(f"{'Охранник' if action['item_type'] == 'guard' else 'Аксессуар'} '{text}' добавлен!")
+            else:
+                update.message.reply_text("Уже существует!")
+            context.user_data.pop('action')
+            self.start(update, context)
+        elif action['type'] == 'rent':
+            try:
+                if 'amount' not in action:
+                    action['amount'] = float(text)
+                    update.message.reply_text(f"Стоимость: ${action['amount']}/час. На сколько часов?")
+                else:
+                    hours = float(text)
+                    total, fee, earnings = self.manager.add_transaction(
+                        user_id, action['item'], action['amount'], hours, action['item_type'])
+                    update.message.reply_text(
+                        f"✅ Аренда {action['item_type']} {action['item']}:\n"
+                        f"Часов: {hours}\nИтого: ${total:.2f}\n"
+                        f"Комиссия: ${fee:.2f}\nВаш доход: ${earnings:.2f}")
+                    context.user_data.pop('action')
+                    self.start(update, context)
+            except ValueError:
+                update.message.reply_text("Введите число!")
+    
+    def show_items(self, update: Update, user_id: int, item_type: str):
+        items = self.manager.data['users'].get(str(user_id), {}).get('guards' if item_type == 'guard' else 'accessories', [])
+        if not items:
+            update.message.reply_text(f"Нет {'охранников' if item_type == 'guard' else 'аксессуаров'}.")
+            return
+        update.message.reply_text("\n".join(items))
+    
+    def show_items_to_remove(self, update: Update, user_id: int, item_type: str):
+        items = self.manager.data['users'].get(str(user_id), {}).get('guards' if item_type == 'guard' else 'accessories', [])
+        if not items:
+            update.message.reply_text(f"Нет {'охранников' if item_type == 'guard' else 'аксессуаров'} для удаления.")
+            return
+        buttons = [[InlineKeyboardButton(item, callback_data=f"remove_{item_type}_{item}")] for item in items]
+        update.message.reply_text(f"Выберите для удаления:", reply_markup=InlineKeyboardMarkup(buttons))
+    
+    def show_stats_menu(self, update: Update):
+        buttons = [
+            [InlineKeyboardButton("Аксессуары", callback_data="stats_accessory"),
+             InlineKeyboardButton("Охранники", callback_data="stats_guard")],
+            [InlineKeyboardButton("Общая", callback_data="stats_all")]
+        ]
+        update.message.reply_text("Статистика:", reply_markup=InlineKeyboardMarkup(buttons))
+    
+    def show_stats(self, update: Update, user_id: int, item_type: str = None):
+        periods = {'24h': "За день", 'week': "За неделю", 'month': "За месяц", None: "Всего"}
+        stats = {}
+        for period, label in periods.items():
+            stats[period] = self.manager.get_stats(user_id, item_type, period)
+        message = f"📊 {'Общая статистика' if item_type is None else 'Статистика по ' + ('охранникам' if item_type == 'guard' else 'аксессуарам')}:\n"
+        for period, label in periods.items():
+            total, fee, earnings = stats[period]
+            message += f"{label}: ${total:.2f} (доход: ${earnings:.2f})\n"
+        update.message.reply_text(message)
+    
+    def button_handler(self, update: Update, context: CallbackContext):
+        query = update.callback_query
+        data = query.data.split('_')
+        user_id = query.from_user.id
+        if data[0] == 'remove':
+            item_type, item = data[1], data[2]
+            if self.manager.remove_item(user_id, item, item_type):
+                query.edit_message_text(f"{'Охранник' if item_type == 'guard' else 'Аксессуар'} '{item}' удален!")
+            else:
+                query.edit_message_text("Ошибка удаления!")
+        elif data[0] == 'stats':
+            item_type = None if data[1] == 'all' else data[1]
+            self.show_stats(update, user_id, item_type)
+        query.answer()
+    
+    def run(self):
+        self.updater.start_polling()
+        self.updater.idle()
+
+if __name__ == '__main__':
+    bot = RentalBot("7529450433:AAE2mfcHYDNS1UUJH-90NFJH7Fdqzxg-UNk", [5214851916,832295315,810397112])
+    bot.run()
