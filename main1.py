@@ -123,6 +123,51 @@ class RentalBot:
             return
 
         text = update.message.text
+        
+        # Обработка ввода стоимости аренды
+        if 'rent_item' in context.user_data:
+            try:
+                amount = float(text)
+                context.user_data['rent_amount'] = amount
+                await update.message.reply_text(f"⏱ Введите количество часов для аренды {context.user_data['rent_item']}:")
+                return
+            except ValueError:
+                await update.message.reply_text("❌ Пожалуйста, введите число!")
+                return
+        
+        # Обработка ввода времени аренды
+        if 'rent_amount' in context.user_data:
+            try:
+                hours = float(text)
+                item = context.user_data['rent_item']
+                item_type = context.user_data['rent_type']
+                amount = context.user_data['rent_amount']
+                
+                total, fee, earnings = self.manager.add_transaction(
+                    item, amount, hours, item_type, user_id)
+                
+                await update.message.reply_text(
+                    f"✅ Аренда оформлена:\n\n"
+                    f"🔹 Предмет: {item}\n"
+                    f"💵 Ставка: ${amount}/час\n"
+                    f"⏱ Часов: {hours}\n"
+                    f"💰 Итого: ${total:.2f}\n"
+                    f"📌 Комиссия: ${fee:.2f}\n"
+                    f"💸 Ваш доход: ${earnings:.2f}")
+                
+                # Очищаем временные данные
+                for key in ['rent_item', 'rent_type', 'rent_amount']:
+                    context.user_data.pop(key, None)
+                
+                # Возвращаем в главное меню
+                await self.start(update, context)
+                return
+                
+            except ValueError:
+                await update.message.reply_text("❌ Пожалуйста, введите число!")
+                return
+        
+        # Остальная обработка команд
         if text == "Добавить аксессуар":
             context.user_data['action'] = {'type': 'add', 'item_type': 'accessory'}
             await update.message.reply_text("Введите название аксессуара:")
@@ -176,7 +221,21 @@ class RentalBot:
         if not items:
             await update.message.reply_text(f"❌ Нет {'охранников' if item_type == 'guard' else 'аксессуаров'}.")
             return
-        await update.message.reply_text("\n".join(items))
+        
+        # Создаем инлайн-кнопки для каждого предмета
+        keyboard = []
+        for item in items:
+            keyboard.append([InlineKeyboardButton(
+                text=f"Арендовать {item}",
+                callback_data=f"rent_{item_type}_{item}"
+            )])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        item_type_name = "охранников" if item_type == 'guard' else "аксессуаров"
+        await update.message.reply_text(
+            f"Выберите {item_type_name} для аренды:",
+            reply_markup=reply_markup
+        )
     
     async def _show_items_to_remove(self, update: Update, item_type: str):
         items = self.manager.data['guards'] if item_type == 'guard' else self.manager.data['accessories']
@@ -211,6 +270,14 @@ class RentalBot:
                 await query.edit_message_text(f"✅ {'Охранник' if item_type == 'guard' else 'Аксессуар'} '{item}' удален!")
             else:
                 await query.edit_message_text("❌ Ошибка удаления!")
+        
+        elif data[0] == 'rent':
+            item_type, item = data[1], data[2]
+            context.user_data['rent_item'] = item
+            context.user_data['rent_type'] = item_type
+            await query.edit_message_text(f"💵 Введите стоимость аренды в час для {item}:")
+            return
+        
         elif data[0] == 'stats':
             item_type = None if data[1] == 'all' else data[1]
             total, fee, earnings = self.manager.get_stats(item_type, user_id=user_id)
@@ -219,6 +286,7 @@ class RentalBot:
                 f"💵 Общий доход: ${total:.2f}\n"
                 f"📌 Комиссия: ${fee:.2f}\n"
                 f"💸 Ваш заработок: ${earnings:.2f}")
+        
         await query.answer()
     
     def run(self):
