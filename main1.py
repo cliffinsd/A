@@ -1,7 +1,7 @@
 import sqlite3
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Инициализация бота
 bot = telebot.TeleBot("6288603114:AAFvvlzV2oZoojhwMdEyTfRniFNGWdp7bU0")
@@ -66,29 +66,30 @@ def guard_menu():
 # Меню выбора часов
 def hours_menu(item_type, name, amount):
     keyboard = InlineKeyboardMarkup(row_width=3)
-    hours = [1, 2, 3, 4, 5, 6, 8, 12, 24]  # Можно расширить список при необходимости
+    hours = [1, 2, 3, 4, 5, 6, 8, 12, 24]
     for h in hours:
         keyboard.add(InlineKeyboardButton(f"{h} ч", callback_data=f"{item_type}_hours_{name}_{amount}_{h}"))
     keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="back"))
     return keyboard
 
-# Расчет доходов
+# Расчет доходов с учетом времени
 def calculate_earnings(user_id, period):
-    cursor.execute("SELECT type, amount, hours FROM rentals WHERE user_id = ? AND amount > 0 AND hours > 0", (user_id,))
+    cursor.execute("SELECT type, amount, hours, timestamp FROM rentals WHERE user_id = ? AND amount > 0 AND hours > 0", (user_id,))
     rows = cursor.fetchall()
     total = 0
+    now = datetime.now()
     for row in rows:
-        amount, hours, item_type = row[1], row[2], row[0]
+        amount, hours, item_type, timestamp = row[1], row[2], row[0], datetime.fromisoformat(row[3])
         commission = 0.08 if item_type == "accessory" else 0.12
-        net_amount = amount * (1 - commission)
-        if period == "day":
-            total += net_amount * hours
-        elif period == "week":
-            total += net_amount * hours * 7
-        elif period == "month":
-            total += net_amount * hours * 30
+        net_amount = amount * (1 - commission) * hours
+        if period == "day" and now - timestamp <= timedelta(hours=24):
+            total += net_amount
+        elif period == "week" and now - timestamp <= timedelta(days=7):
+            total += net_amount
+        elif period == "month" and now - timestamp <= timedelta(days=30):
+            total += net_amount
         elif period == "all":
-            total += net_amount * hours
+            total += net_amount
     return total
 
 # Форматирование сообщения о доходах
