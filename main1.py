@@ -3,7 +3,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime
 
-bot = telebot.TeleBot("7529450433:AAE2mfcHYDNS1UUJH-90NFJH7Fdqzxg-UNk")
+bot = telebot.TeleBot("8117016919:AAGwBSoaU0i2cctpaeEu_P14xnTJB_uvXjw")
 
 whitelist = [810397112, 832295315, 5214851916]
 user_states = {}
