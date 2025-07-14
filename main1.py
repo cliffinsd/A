@@ -3,7 +3,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime
 
-bot = telebot.TeleBot("8117016919:AAGwBSoaU0i2cctpaeEu_P14xnTJB_uvXjw")
+bot = telebot.TeleBot("6288603114:AAFvvlzV2oZoojhwMdEyTfRniFNGWdp7bU0")
 
 whitelist = [810397112, 832295315, 5214851916]
 user_states = {}
@@ -52,14 +52,6 @@ def guard_menu():
     for guard in guards:
         keyboard.add(InlineKeyboardButton(f"🛡️ {guard}", callback_data=f"guard_{guard}"))
         keyboard.add(InlineKeyboardButton(f"🗑️ Удалить {guard}", callback_data=f"del_guard_{guard}"))
-    keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="back"))
-    return keyboard
-
-def amount_menu(item_type, name):
-    keyboard = InlineKeyboardMarkup(row_width=3)
-    amounts = [1000, 5000, 10000, 20000, 50000]
-    for amount in amounts:
-        keyboard.add(InlineKeyboardButton(f"{amount}", callback_data=f"{item_type}_amount_{name}_{amount}"))
     keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="back"))
     return keyboard
 
@@ -131,21 +123,21 @@ def callback_query(call):
     elif call.data.startswith("acc_") and not call.data.startswith("del_acc_"):
         acc_name = call.data[4:]
         bot.edit_message_text(
-            f"📦 <b>{acc_name}</b>\nВыберите сумму аренды за час:",
+            f"📦 <b>{acc_name}</b>\nВведите сумму аренды за час:",
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=amount_menu("acc", acc_name)
+            parse_mode="HTML"
         )
+        user_states[user_id] = f"waiting_acc_amount_{acc_name}"
     elif call.data.startswith("guard_") and not call.data.startswith("del_guard_"):
         guard_name = call.data[6:]
         bot.edit_message_text(
-            f"🛡️ <b>{guard_name}</b>\nВыберите сумму аренды за час:",
+            f"🛡️ <b>{guard_name}</b>\nВведите сумму аренды за час:",
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=amount_menu("guard", guard_name)
+            parse_mode="HTML"
         )
+        user_states[user_id] = f"waiting_guard_amount_{guard_name}"
     elif call.data.startswith("del_acc_"):
         acc_name = call.data[8:]
         cursor.execute("DELETE FROM rentals WHERE type = 'accessory' AND name = ?", (acc_name,))
@@ -156,27 +148,6 @@ def callback_query(call):
         cursor.execute("DELETE FROM rentals WHERE type = 'guard' AND name = ?", (guard_name,))
         db.commit()
         bot.edit_message_text("👥 <b>Список охранников</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=guard_menu())
-    elif data[0] in ["acc", "guard"] and data[1] == "amount":
-        item_type, name, amount = data[0], data[2], int(data[3])
-        bot.edit_message_text(
-            f"{('📦' if item_type == 'acc' else '🛡️')} <b>{name}</b>\nСумма: {amount}\nВыберите количество часов:",
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=hours_menu(item_type, name, amount)
-        )
-    elif data[0] in ["acc", "guard"] and data[1] == "hours":
-        item_type, name, amount, hours = data[0], data[2], int(data[3]), int(data[4])
-        cursor.execute("INSERT INTO rentals (user_id, type, name, amount, hours, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-                      (user_id, "accessory" if item_type == "acc" else "guard", name, amount, hours, datetime.now().isoformat()))
-        db.commit()
-        bot.edit_message_text(
-            f"✅ Добавлена аренда: <b>{name}</b> на {hours} часов за {amount}",
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            parse_mode="HTML",
-            reply_markup=main_menu()
-        )
     elif call.data == "back":
         bot.edit_message_text("👋 <b>Главное меню</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=main_menu())
     bot.answer_callback_query(call.id)
@@ -205,9 +176,47 @@ def handle_text(message):
             bot.send_message(message.chat.id, "⚠️ Охранник с таким именем уже существует", parse_mode="HTML", reply_markup=main_menu())
         else:
             cursor.execute("INSERT INTO rentals (user_id, type, name, amount, hours, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-                          (user_id, "guard", message.text, five, 0, datetime.now().isoformat()))
+                          (user_id, "guard", message.text, 0, 0, datetime.now().isoformat()))
             db.commit()
             bot.send_message(message.chat.id, f"✅ Охранник <b>{message.text}</b> добавлен", parse_mode="HTML", reply_markup=main_menu())
         user_states.pop(user_id, None)
+    elif state and state.startswith("waiting_acc_amount_"):
+        try:
+            amount = int(message.text)
+            acc_name = state[19:]
+            bot.send_message(
+                message.chat.id,
+                f"📦 <b>{acc_name}</b>\nСумма: {amount}\nВыберите количество часов:",
+                parse_mode="HTML",
+                reply_markup=hours_menu("acc", acc_name, amount)
+            )
+            user_states.pop(user_id, None)
+        except ValueError:
+            bot.send_message(message.chat.id, "⚠️ Пожалуйста, введите корректную сумму (число)")
+    elif state and state.startswith("waiting_guard_amount_"):
+        try:
+            amount = int(message.text)
+            guard_name = state[21:]
+            bot.send_message(
+                message.chat.id,
+                f"🛡️ <b>{guard_name}</b>\nСумма: {amount}\nВыберите количество часов:",
+                parse_mode="HTML",
+                reply_markup=hours_menu("guard", guard_name, amount)
+            )
+            user_states.pop(user_id, None)
+        except ValueError:
+            bot.send_message(message.chat.id, "⚠️ Пожалуйста, введите корректную сумму (число)")
+    elif data[0] in ["acc", "guard"] and data[1] == "hours":
+        item_type, name, amount, hours = data[0], data[2], int(data[3]), int(data[4])
+        cursor.execute("INSERT INTO rentals (user_id, type, name, amount, hours, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                      (user_id, "accessory" if item_type == "acc" else "guard", name, amount, hours, datetime.now().isoformat()))
+        db.commit()
+        bot.edit_message_text(
+            f"✅ Добавлена аренда: <b>{name}</b> на {hours} часов за {amount}",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode="HTML",
+            reply_markup=main_menu()
+        )
 
 bot.polling()
