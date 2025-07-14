@@ -73,7 +73,7 @@ def hours_menu(item_type, name, amount):
 
 def calculate_earnings(user_id, period):
     cursor.execute("SELECT type, amount, hours FROM rentals WHERE user_id = ? AND amount > 0 AND hours > 0", (user_id,))
-    rows Facrows = cursor.fetchall()
+    rows = cursor.fetchall()
     total = 0
     for row in rows:
         amount, hours, item_type = row[1], row[2], row[0]
