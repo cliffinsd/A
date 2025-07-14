@@ -133,7 +133,7 @@ def callback_query(call):
     elif call.data == "list_guards":
         bot.edit_message_text("👥 <b>Список охранников</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=guard_menu())
     elif call.data == "earnings":
-        bot.edit_message_text(format_earnings_message(user_id), chat_id=call.message.chat.id, message_id=ительными рекомендациями call.message.message_id, parse_mode="HTML", reply_markup=main_menu())
+        bot.edit_message_text(format_earnings_message(user_id), chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=main_menu())
     elif call.data.startswith("acc_") and not call.data.startswith("del_acc_") and not call.data.startswith("acc_hours_"):
         acc_name = call.data[4:]
         bot.edit_message_text(
