@@ -72,9 +72,9 @@ def hours_menu(item_type, name, amount):
     keyboard.add(InlineKeyboardButton("🔙 Назад", callback_data="back"))
     return keyboard
 
-# Расчет доходов с учетом времени
+# Расчет доходов с учетом времени для всех пользователей
 def calculate_earnings(user_id, period):
-    cursor.execute("SELECT type, amount, hours, timestamp FROM rentals WHERE user_id = ? AND amount > 0 AND hours > 0", (user_id,))
+    cursor.execute("SELECT type, amount, hours, timestamp FROM rentals WHERE amount > 0 AND hours > 0")
     rows = cursor.fetchall()
     total = 0
     now = datetime.now()
@@ -133,7 +133,7 @@ def callback_query(call):
     elif call.data == "list_guards":
         bot.edit_message_text("👥 <b>Список охранников</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=guard_menu())
     elif call.data == "earnings":
-        bot.edit_message_text(format_earnings_message(user_id), chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML", reply_markup=main_menu())
+        bot.edit_message_text(format_earnings_message(user_id), chat_id=call.message.chat.id, message_id=ительными рекомендациями call.message.message_id, parse_mode="HTML", reply_markup=main_menu())
     elif call.data.startswith("acc_") and not call.data.startswith("del_acc_") and not call.data.startswith("acc_hours_"):
         acc_name = call.data[4:]
         bot.edit_message_text(
